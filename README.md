@@ -1,6 +1,6 @@
 # FreeTime
 
-FreeTime is a lightweight system tray application that helps you quickly find and share your available meeting times. It checks your calendars and generates a list of free time slots that can be instantly pasted anywhere when you type a trigger phrase (eg ":ttt").
+FreeTime is a lightweight system tray application that helps you quickly find and share your available meeting times. It checks your calendars and generates a list of free time slots that can be instantly pasted anywhere when you type a trigger phrase (eg ":tt").
 
 <img src="screenshots/freetime_paste.gif" width="400">
 
