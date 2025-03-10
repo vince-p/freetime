@@ -17,8 +17,8 @@ FreeTime is a lightweight system tray application that helps you quickly find an
 ## Download
 
 Download the latest version for your platform:
-- [Windows](link-to-latest-windows-release)
-- [macOS](link-to-latest-mac-release)
+- [Windows](https://github.com/vince-p/freetime/releases/tag/0.8)
+- macOS - coming soon!
 
 ## Quick Start
 
