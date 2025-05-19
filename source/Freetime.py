@@ -1143,7 +1143,7 @@ class CalendarApp:
             'include_current_day': False,
             'exclude_weekends': True,
             'update_interval': 300,
-            'trigger_pattern': ":ttt",
+            'trigger_pattern': ":tt",
             'custom_text': "I'm free at the following times...",
             'ignore_all_day_events': True  # New setting, default to True
         }

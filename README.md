@@ -1,13 +1,15 @@
 # FreeTime
 
+![](source\logo.png)
+
 FreeTime is a lightweight system tray application that helps you quickly find and share your available meeting times. It checks your calendars and generates a list of free time slots that can be instantly pasted anywhere when you type a trigger phrase (eg ":tt").
 
-<img src="screenshots/freetime_paste.gif" width="400">
+![](screenshots/demo.gif)
 
 ## Features
 
 - 🔍 Monitors multiple calendars simultaneously
-- ⚡ Instant paste of available times with customizable trigger phrase
+- ⚡ Instantly paste your available times in any window with a customizable trigger phrase
 - 🕒 Configurable working hours and date range
 - 🔄 Automatic calendar updates
 - 🌐 Works with any calendar that provides iCal/ICS feeds
@@ -16,31 +18,34 @@ FreeTime is a lightweight system tray application that helps you quickly find an
 
 ## Download
 
-Download the latest version for your platform:
-- [Windows](https://github.com/vince-p/freetime/releases/tag/0.8)
-- macOS - coming soon!
+[Download](https://github.com/vince-p/freetime/releases) the latest version for your platform:
+- Windows
+- macOS
 
 ## Quick Start
 
 1. Download and run FreeTime
 2. Add your calendar URLs (see below for how to get these)
 3. Set your preferred working hours and options
-6. Use the trigger phrase anywhere (default ":ttt") to paste your available times
+6. Use the trigger phrase anywhere (default ":tt") to paste your available times
+
+**[Set app permissions on macOS](macsetup.md)**
 
 ## Setting Up Calendar URLs
 
 ### Google Calendar
 
-1. Open [Google Calendar](https://calendar.google.com/)
+1. Open [Google Calendar](https://calendar.google.com/calendar)
 2. Click the three dots next to your calendar name
 3. Select 'Settings and sharing'
+4. Near the top of the page, ensure that "Make available to public" is checked. Select "See only free/busy (hide details)"
 4. Scroll to 'Integrate calendar'
-5. Copy the 'Secret address in iCal format'
+5. Copy the 'Public address in iCal format'
 
-<img src="screenshots/google_calendar_setup.png" width="600">
-
-**Note:** This URL is private - anyone with this URL can view your calendar. There is no security risk using this in FreeTime. The calendar information never leaves your device.
-If you do not want to use the secret address, you can alternately use the 'Public address in iCal format' address. For this to work, you need to enable the option 'Make calendar available to public' near the top of the settings screen. You can make a calendar public but only share free/busy time.
+![](screenshots/googlecalsettings2.png)
+![](screenshots/googlecalsettings1.png)
+   
+**Note:** This URL is not shared anywehre but anyone with this URL can view the times you are free/busy. There is no security risk using this in FreeTime. The calendar information never leaves your device.
 
 
 ### Microsoft Office 365
@@ -48,27 +53,37 @@ If you do not want to use the secret address, you can alternately use the 'Publi
 1. Open [Outlook Calendar](https://outlook.office.com/calendar)
 2. Click the gear icon (Settings)
 3. Select 'Shared Calendar'
-4. Select your calendar
-5. Choose "Can view when I am busy" under "Permissions"
-6. Click "Publish"
-7. Copy the ICS link
+4. Go the 'Publish a calendar' section (bottom part of window)
+5. Select a calendar from the drop down list
+6. Choose "Can view when I am busy" under "Permissions"
+7. Click "Publish"
+8. Copy the ICS link
 
-<img src="screenshots/office365_setup.png" width="600">
+![](screenshots/outlooksettings.png)
 
 ## FreeTime Configuration Options
+
+### Calendar Settings
+- **Add or Remove URLs:** Enter ical urls for any calendars you want to conitor
+- **Custom Text:** Modify the introductory text when pasting
 
 ### Time Settings
 - **Meeting Hours:** Set your standard working hours
 - **Lookahead Days:** Number of days to check for availability
 - **Include Current Day:** Include today in available times
 - **Exclude Weekends:** Remove weekends from available times
+- **Ignore all-day and multi-day events** Should all day event be blocked out?
 - **Timezone:** Set your local timezone
 
 ### App Settings
-- **Update Interval:** How often to refresh calendar data
+- **Update Interval:** How often to refresh calendar data (default 4 mins)
 - **Trigger:** Customize the trigger phrase
 - **Run at startup:** Launch automatically with system
-- **Custom Text:** Modify the introductory text when pasting
+
+
+## Feedback
+This is my first app and I'd love any feedback if this is useful or if you find any bugs.
+Contact me at freetime@cogscience.org
 
 ## Building from Source
 
