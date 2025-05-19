@@ -1,8 +1,12 @@
+.gitignore
+
 # PyInstaller
 build/
 dist/
 old/
-*.spec
+#*.spec
+source/*.json
+source/*.log
 
 # Python
 __pycache__/

@@ -1,12 +1,10 @@
 import requests
-#from ics import Calendar
 from datetime import datetime, timedelta
 import pytz
 import pyperclip
 from typing import List, Dict, Set
 from datetime import date
 import pystray
-#from PIL import Image
 import threading
 import time
 import pyautogui
@@ -21,14 +19,23 @@ from pathlib import Path
 import platform
 import subprocess
 import tkinter.font as tk_font
-#from pynput import keyboard
-import keyboard
 from PIL import Image, ImageTk
-from icalendar import Calendar, vDatetime
-from dateutil import rrule
+from icalendar import Calendar
+from typing import List, Dict, Set, Tuple
 
-version_string = "0.8"
+
+version_string = "0.99"
 # Changelog
+#1
+
+# v0.99 8/5/25
+# Working well across platforms
+
+# v091 1/5/25
+# Fix logging code so that it works across platforms
+
+# v09 25/4/25
+# fixed an error where recurring events created before daylight saving change are processed incorrectly after daylight savings.
 
 # v0.8 7/3/25
 # Added option to ignore allday and multi-day events
@@ -60,23 +67,34 @@ class NewestFirstLogHandler(logging.FileHandler):
 
     def emit(self, record):
         try:
-            # Read existing logs
             lines = []
             if os.path.exists(self.baseFilename):
-                with open(self.baseFilename, 'r') as f:
-                    lines = f.readlines()
+                try:
+                    # Explicitly use utf-8 encoding and ignore errors on read
+                    with open(self.baseFilename, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                except Exception as e:
+                    # Log an error if reading fails, but continue
+                    logging.error(f"Error reading log file {self.baseFilename}: {e}", exc_info=True)
+                    lines = [] # Start fresh if read fails
 
             # Add new log entry at the beginning
-            lines.insert(0, self.format(record) + '\n')
+            new_log_line = self.format(record) + '\n'
+            lines.insert(0, new_log_line)
 
             # Keep only the most recent MAX_ENTRIES
             lines = lines[:self.MAX_ENTRIES]
 
-            # Write back to file
-            with open(self.baseFilename, 'w') as f:
-                f.writelines(lines)
+            try:
+                # Explicitly use utf-8 encoding for writing
+                with open(self.baseFilename, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+            except Exception as e:
+                 logging.error(f"Error writing log file {self.baseFilename}: {e}", exc_info=True)
+                 # If writing fails, we might lose logs, but the app shouldn't crash
+
         except Exception:
-            self.handleError(record)
+            self.handleError(record) # Use standard error handling if something else goes wrong
 
 # Set up app paths
 APP_DIR = get_app_directory()
@@ -109,20 +127,26 @@ class AboutWindow:
     def __init__(self, root, icon_image):
         self.window = tk.Toplevel()
         self.window.title("Freetime")
-        self.window.geometry("300x230")
 
-        # Make window non-resizable
+        system = platform.system()
+
+        # --- Platform-specific initial window state ---
+        if system == 'Windows':
+            # On Windows, withdraw immediately to prevent flash
+            self.window.withdraw()
+            # Setting an initial geometry can sometimes help with early layout calculations on Windows
+            self.window.geometry("300x230")
+        else: # For macOS and other systems
+            # On macOS (and others), do NOT withdraw initially.
+            # The window will appear immediately, and we will center it shortly after.
+            pass
+        # --- End Platform-specific initial window state ---
+
+
+        # Make window non-resizable (same for all platforms)
         self.window.resizable(False, False)
 
-        # Center the window
-        self.window.update_idletasks()
-        width = self.window.winfo_width()
-        height = self.window.winfo_height()
-        x = (self.window.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.window.winfo_screenheight() // 2) - (height // 2)
-        self.window.geometry(f'{width}x{height}+{x}+{y}')
-
-        # Set window icon
+        # Set window icon (same for all platforms)
         try:
             icon_photo = ImageTk.PhotoImage(icon_image)
             self.window.iconphoto(True, icon_photo)
@@ -130,6 +154,7 @@ class AboutWindow:
         except Exception as e:
             logging.error(f"Error setting window icon: {e}")
 
+        # --- Build Content (same for all platforms) ---
         # Create main frame with padding
         main_frame = ttk.Frame(self.window, padding="20")
         main_frame.pack(expand=True, fill='both')
@@ -140,7 +165,6 @@ class AboutWindow:
 
         # Display logo
         try:
-            # Resize image to fit window (adjust size as needed)
             logo_size = (100, 100)
             logo_image = icon_image.resize(logo_size, Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(logo_image)
@@ -175,11 +199,92 @@ class AboutWindow:
                                      "Could not open link. Please visit https://github.com/vince-p/freetime manually.")
 
         link_label.bind("<Button-1>", open_github)
+        # --- End Build Content ---
 
-        # Keep window on top
+        # --- Platform-specific Centering Logic ---
+        if system == 'Windows':
+            # On Windows, calculate size and position while withdrawn, then deiconify
+            try:
+                # Force Tkinter to calculate the required size based on packed content
+                self.window.update()
+                self.window.update_idletasks()
+
+                # Get the window's actual size based on content
+                content_width = self.window.winfo_width()
+                content_height = self.window.winfo_height()
+
+                # Increase dimensions by 20%
+                new_width = int(content_width * 1.2)
+                new_height = int(content_height * 1.2)
+
+                # Get screen dimensions
+                screen_width = self.window.winfo_screenwidth()
+                screen_height = self.window.winfo_screenheight()
+
+                # Calculate position x, y coordinates for centering the *new* size
+                x = (screen_width - new_width) // 2
+                y = (screen_height - new_height) // 2
+
+                logging.debug(f"Windows Centering: content_size={content_width}x{content_height}, new_size={new_width}x{new_height}, screen={screen_width}x{screen_height}, pos={x}+{y}")
+
+                # Set the window's new size and position while it's still withdrawn
+                self.window.geometry(f"{new_width}x{new_height}+{x}+{y}")
+
+            except Exception as e:
+                 logging.error(f"Error during Windows centering calculation: {e}", exc_info=True)
+
+            # Make the window visible *after* positioning
+            self.window.deiconify()
+
+        else: # macOS and others
+            # On macOS, schedule delayed centering
+            # The window is already visible at this point because we didn't withdraw
+            self.window.after(50, self._center_window_mac) # Use a small delay like 50ms
+
+        # --- End Platform-specific Centering Logic ---
+
+
+        # Ensure window is on top and gets focus after being shown/positioned
+        # This happens after deiconify on Windows or after scheduling on macOS
         self.window.lift()
+        self.window.attributes('-topmost', True)
+        # Call update() again here for robustness after state changes
+        self.window.update()
+        self.window.attributes('-topmost', False)
         self.window.focus_force()
 
+
+    def _center_window_mac(self):
+        """Calculates and sets the window's position to center it (for macOS/other)."""
+        try:
+            # Force geometry calculation
+            self.window.update_idletasks()
+            # Use update() here as well for reliability before querying dimensions
+            self.window.update()
+
+            # Get the window's actual size based on content
+            content_width = self.window.winfo_width()
+            content_height = self.window.winfo_height()
+
+            # Increase dimensions by 20% (same logic as Windows)
+            new_width = int(content_width * 1.2)
+            new_height = int(content_height * 1.2)
+
+            # Get screen dimensions
+            screen_width = self.window.winfo_screenwidth()
+            screen_height = self.window.winfo_screenheight()
+
+            # Calculate position x, y coordinates for centering the *new* size
+            x = (screen_width - new_width) // 2
+            y = (screen_height - new_height) // 2
+
+            logging.debug(f"macOS Centering: content_size={content_width}x{content_height}, new_size={new_width}x{new_height}, screen={screen_width}x{screen_height}, pos={x}+{y}")
+
+            # Set the window's new size and position
+            self.window.geometry(f"{new_width}x{new_height}+{x}+{y}")
+
+        except Exception as e:
+             logging.error(f"Error during macOS window centering: {e}", exc_info=True)
 
 class SettingsWindow:
     def __init__(self, app, root):
@@ -367,10 +472,6 @@ class SettingsWindow:
         self.trigger_text_entry = ttk.Entry(app_frame, textvariable=self.trigger_text_var)
         self.trigger_text_entry.grid(row=1, column=1, sticky=(tk.W, tk.E))
 
-        # Add a help label explaining the trigger
-        #ttk.Label(app_frame, text="Type this text anywhere to insert your free time",
-        #          font=('', 9), foreground='gray').grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5)
-
         # Startup checkbox
         self.startup_var = tk.BooleanVar(value=self.check_startup())
         startup_cb = ttk.Checkbutton(app_frame, text="Run at startup",
@@ -378,129 +479,61 @@ class SettingsWindow:
                                      command=self.toggle_startup)
         startup_cb.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
 
-        # Bottom Section - Create a frame for the bottom elements
-        # Add an empty row with weight to push the bottom frame down
-        main_frame.rowconfigure(current_row, weight=1)  # Give weight to push content down
+        current_row += 1
+
+        # Add an empty spacer row with weight to push the bottom frame down
+        # This is the key change - add a spacer frame that can expand
+        spacer_frame = ttk.Frame(main_frame)
+        spacer_frame.grid(row=current_row, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.rowconfigure(current_row, weight=1)  # Give this row weight to expand
         current_row += 1
 
         # Now create the bottom frame in the next row
         bottom_frame = ttk.Frame(main_frame)
-        bottom_frame.grid(row=current_row, column=0, pady=10, sticky=(tk.W, tk.E, tk.S))  # Add sticky=tk.S
+        bottom_frame.grid(row=current_row, column=0, pady=10, sticky=(tk.W, tk.E, tk.S))
         bottom_frame.columnconfigure(1, weight=1)  # Make middle column expand
 
         # Log File Link (left aligned)
         log_label = ttk.Label(bottom_frame, text="View log", cursor="hand2")
         log_label.grid(row=0, column=0, sticky=tk.W)
+        log_label.bind("<Button-1>", self.open_log_file)
 
         # Get the font used by other ttk elements
         default_font = ttk.Style().lookup('TLabel', 'font')
-        if isinstance(default_font, str):
-            default_font = tk_font.nametofont(default_font)
 
+        # Ensure we have a tk_font.Font object, fallback to 'TkDefaultFont' if needed
+        try:
+            name = str(default_font) if default_font else "TkDefaultFont"
+            default_font_obj = tk_font.nametofont(name)
+        except Exception:
+            default_font_obj = tk_font.nametofont("TkDefaultFont")
+
+        # Now we can safely use cget
         link_font = tk_font.Font(
-            family=default_font.cget("family"),
-            size=default_font.cget("size") - 1,
-            weight=default_font.cget("weight")
+            family=default_font_obj.cget("family"),
+            size=max(default_font_obj.cget("size") - 1, 1),  # avoid size < 1
+            weight=default_font_obj.cget("weight")
         )
         link_font.configure(underline=True)
         log_label.configure(font=link_font)
-        log_label.bind("<Button-1>", self.open_log_file)
 
         # Status Label (center aligned)
         self.status_label = ttk.Label(bottom_frame, text="", foreground="green")
         self.status_label.grid(row=0, column=1)
 
-        # Show startup message if no URLs exist
-        if not self.app.calendar_urls:
-            # Create a frame for the message and link
-            msg_frame = ttk.Frame(bottom_frame)
-            msg_frame.grid(row=0, column=1)
-
-            # Add the text message
-            msg_label = ttk.Label(msg_frame, text="Enter an ical url to start. ", foreground="blue")
-            msg_label.grid(row=0, column=0)
-
-            # Create and style the hyperlink
-            link_label = ttk.Label(msg_frame, text="See here", cursor="hand2", foreground="blue")
-            link_font = tk_font.Font(
-                family=default_font.cget("family"),
-                size=default_font.cget("size"),
-                underline=True
-            )
-            link_label.configure(font=link_font)
-            link_label.grid(row=0, column=1)
-
-            # Add click handler for the link
-            def open_link(event):
-                import webbrowser
-                webbrowser.open("https://github.com/vince-p/freetime")
-
-            link_label.bind("<Button-1>", open_link)
-
         # Save Button (right aligned)
-        ttk.Button(bottom_frame, text="Save", command=self.save_settings).grid(
-            row=0, column=2, sticky=tk.E)
+        save_button = ttk.Button(bottom_frame, text="Save", command=self.save_settings)
+        save_button.grid(row=0, column=2, sticky=tk.E)
 
-        # Add change trackers for the trigger text
-        self.trigger_text_var.trace_add("write", clear_status)
-
-        # Add change trackers to all input elements
-        def clear_status(*args):
-            """Clear the status message when any setting is changed"""
-            if self.status_label.cget("text") == "Settings saved":
-                self.status_label.config(text="")
-
-            # Add change trackers to all input elements
-            # Track changes in entry widgets and listbox
-            self.url_listbox.bind('<<ListboxSelect>>', clear_status)
-            self.custom_text_var.trace_add("write", clear_status)
-
-            # Track changes in spinboxes
-            self.start_hour_var.trace_add("write", clear_status)
-            self.end_hour_var.trace_add("write", clear_status)
-            self.lookahead_var.trace_add("write", clear_status)
-            self.interval_var.trace_add("write", clear_status)
-
-            # Track changes in checkboxes
-            self.exclude_weekends_var.trace_add("write", clear_status)
-            self.include_current_day_var.trace_add("write", clear_status)
-
-            # Track changes in timezone combobox
-            self.timezone_combo.bind('<<ComboboxSelected>>', clear_status)
-            self.timezone_var.trace_add("write", clear_status)
-
-            # Track changes in trigger text
-            self.trigger_text_var.trace_add("write", clear_status)
-
-        # Also track URL additions and removals
-        def on_url_change():
-            clear_status()
-            self.url_listbox.bind('<<ListboxSelect>>', clear_status)  # Rebind after changes
-
-        # Update the add_calendar_url and remove_calendar_url methods
-        def add_calendar_url():
-            url = simpledialog.askstring("Add Calendar", "Enter calendar URL:", parent=self.window)
-            if url:
-                if url.startswith(('http://', 'https://')):
-                    self.url_listbox.insert(tk.END, url)
-                    on_url_change()
-                else:
-                    messagebox.showerror("Invalid URL", "URL must start with http:// or https://")
-
-        def remove_calendar_url():
-            selection = self.url_listbox.curselection()
-            if selection:
-                self.url_listbox.delete(selection)
-                on_url_change()
-
-        # Update the button commands
-        self.add_button = ttk.Button(calendar_frame, text="Add", command=add_calendar_url)
-        self.add_button.grid(row=2, column=0, sticky=tk.W, pady=5)
-
-        self.remove_button = ttk.Button(calendar_frame, text="Remove", command=remove_calendar_url)
-        self.remove_button.grid(row=2, column=1, sticky=tk.W, pady=5)
+        # Ensure the window is large enough to show all content
+        self.window.update_idletasks()
+        min_height = 740  # Set minimum height
+        current_height = self.window.winfo_height()
+        if current_height < min_height:
+            self.window.geometry(f"{self.window.winfo_width()}x{min_height}")
 
     def save_settings(self):
+        """Save settings, with special handling for the trigger pattern on macOS"""
         try:
             # Get new URLs from listbox
             new_urls = list(self.url_listbox.get(0, tk.END))
@@ -517,8 +550,35 @@ class SettingsWindow:
             # Store old trigger pattern
             old_trigger = getattr(self.app, 'trigger_pattern', ":ttt")
             new_trigger = self.trigger_text_var.get()
+            trigger_changed = new_trigger != old_trigger
 
-            # Update all settings
+            # Handle trigger pattern change
+            if trigger_changed:
+                logging.info(f"Trigger changing from '{old_trigger}' to '{new_trigger}'")
+
+                # Update the main trigger pattern
+                self.app.trigger_pattern = new_trigger
+
+                # Update the trigger patterns list
+                if hasattr(self.app, 'trigger_patterns'):
+                    # Add the new trigger to the beginning of the list
+                    self.app.trigger_patterns.insert(0, new_trigger.lower())
+                    # Keep the old trigger temporarily to allow smooth transition
+                    if old_trigger.lower() in self.app.trigger_patterns:
+                        self.app.trigger_patterns.remove(old_trigger.lower())
+                    # Keep only the last 2 patterns maximum
+                    self.app.trigger_patterns = self.app.trigger_patterns[:2]
+                else:
+                    self.app.trigger_patterns = [new_trigger.lower()]
+
+                logging.info(f"Updated trigger patterns list: {self.app.trigger_patterns}")
+
+                # No need to restart the listener on macOS - it will use the updated patterns list
+                # For Windows, we need to update the hotkey
+                if platform.system() == "Windows":
+                    self.app.setup_hotkey()
+
+            # Update all other settings
             self.app.calendar_urls = new_urls
             self.app.local_tz = pytz.timezone(self.timezone_var.get())
             self.app.start_of_day = self.start_hour_var.get()
@@ -529,12 +589,6 @@ class SettingsWindow:
             self.app.exclude_weekends = self.exclude_weekends_var.get()
             self.app.include_current_day = self.include_current_day_var.get()
             self.app.ignore_all_day_events = self.ignore_all_day_events_var.get()
-
-            # Handle trigger pattern change
-            if new_trigger != old_trigger:
-                self.app.trigger_pattern = new_trigger
-                self.app.setup_hotkey()  # This will reset the text pattern detection
-                logging.info("Trigger text changed")
 
             # Save settings to file
             self.app.save_settings()
@@ -550,10 +604,8 @@ class SettingsWindow:
 
         except Exception as e:
             error_msg = f"Failed to save settings: {str(e)}"
-            logging.error(error_msg)
+            logging.error(error_msg, exc_info=True)
             self.status_label.config(text=error_msg, foreground="red")
-
-
 
     def check_startup(self):
         """Check if app is set to run at startup"""
@@ -690,6 +742,37 @@ Comment=Calendar Free Time Finder"""
         except Exception as e:
             raise Exception(f"Failed to modify Linux startup: {e}")
 
+    def ensure_save_button_visible(self):
+        """Force the save button to be visible and properly rendered"""
+        try:
+            # Find all frames in the window
+            all_frames = self._find_all_widgets(self.window, ttk.Frame)
+            bottom_frame = None
+
+            # Find the bottom frame
+            for frame in all_frames:
+                grid_info = frame.grid_info()
+                if grid_info.get('row') == len(all_frames) - 1:  # Last row
+                    bottom_frame = frame
+                    break
+
+            if bottom_frame:
+                # Recreate save button if needed
+                save_button = ttk.Button(bottom_frame, text="Save", command=self.save_settings)
+                save_button.grid(row=0, column=2, sticky=tk.E)
+                bottom_frame.update()
+                self.window.update_idletasks()
+        except Exception as e:
+            logging.error(f"Error ensuring save button is visible: {e}")
+
+    def _find_all_widgets(self, parent, widget_type):
+        """Helper to find all widgets of a specific type"""
+        result = []
+        for child in parent.winfo_children():
+            if isinstance(child, widget_type):
+                result.append(child)
+            result.extend(self._find_all_widgets(child, widget_type))
+        return result
 
 
 class CalendarApp:
@@ -701,12 +784,23 @@ class CalendarApp:
         self.icon_image = self.load_icon()
 
         # Log startup
-        logging.info("FreeTime application starting...")
-        logging.info(f"App directory: {APP_DIR}")
+        logging.debug(f"App directory: {APP_DIR}")
         logging.info(f"Settings file: {self.settings_file}")
         logging.info(f"Cache file: {self.cache_file}")
 
+        # Initialize threading objects
+        self.paste_lock = threading.Lock()
+        self.is_pasting = False
+
+        # Initialize trigger patterns as a list - the active one will be first
+        self.trigger_patterns = []
+
         self.load_settings()
+
+        # Ensure trigger pattern is in the patterns list
+        if hasattr(self, 'trigger_pattern'):
+            self.trigger_patterns = [self.trigger_pattern.lower()]
+
         self.cached_free_slots = None
         self.load_cache()
         self.settings_window = None
@@ -717,90 +811,307 @@ class CalendarApp:
         self.icon = None
 
         self.original_clipboard = None
-
         self.about_window = None
 
-    from pynput import keyboard
-
     def setup_hotkey(self):
-        """Setup the text pattern detector"""
-        try:
-            logging.info("Starting text pattern detection setup...")
+        """
+        Set up cross-platform text pattern detection:
+        - Use 'keyboard' on Windows
+        - Use 'pynput' on macOS
+        """
+        system = platform.system()
+        self.char_buffer = ""
+        self.buffer_max_size = 20
 
-            # The trigger pattern to look for
-            self.trigger_pattern = getattr(self, 'trigger_pattern', ":ttt")  # Default if not set
-            self.char_buffer = ""
-            self.buffer_max_size = 20  # Keep this larger than the trigger pattern
-            self.is_pasting = False
+        # Ensure we have the paste lock
+        if not hasattr(self, 'paste_lock'):
+            self.paste_lock = threading.Lock()
 
-            def on_key(event):
+        # Ensure we have trigger patterns list
+        if not hasattr(self, 'trigger_patterns') or not self.trigger_patterns:
+            self.trigger_patterns = [self.trigger_pattern.lower()]
+
+        # Only start a new listener if we don't have one already
+        if system == "Darwin" and (not hasattr(self, '_keyboard_listener') or not self._keyboard_listener):
+            from pynput import keyboard as pynput_keyboard
+
+            logging.info(f"Setting up hotkey monitor for macOS with trigger patterns: {self.trigger_patterns}")
+
+            def on_press(key):
+                # Only process keys if we're not currently pasting
+                if hasattr(self, 'is_pasting') and self.is_pasting:
+                    return
+
                 try:
+                    if hasattr(key, "char") and key.char is not None:
+                        c = key.char
+                        self.char_buffer += c
+                        if len(self.char_buffer) > self.buffer_max_size:
+                            self.char_buffer = self.char_buffer[-self.buffer_max_size:]
+                        logging.debug(f"Buffer now: {repr(self.char_buffer)}")
+
+                        # Check against all trigger patterns, with the active one first
+                        trigger_found = False
+                        for trigger in self.trigger_patterns:
+                            if trigger in self.char_buffer:
+                                logging.debug(f"Trigger '{trigger}' detected")
+                                trigger_found = True
+                                break
+
+                        if trigger_found:
+                            # Clear buffer immediately
+                            self.char_buffer = ""
+                            # Schedule trigger_paste with a small delay
+                            if hasattr(self, 'root') and self.root:
+                                self.root.after(10, self.trigger_paste)
+                            else:
+                                threading.Timer(0.01, self.trigger_paste).start()
+                    elif key == pynput_keyboard.Key.space:
+                        self.char_buffer += " "
+                    elif key == pynput_keyboard.Key.enter:
+                        self.char_buffer = ""
+                    elif key == pynput_keyboard.Key.backspace:
+                        self.char_buffer = self.char_buffer[:-1]
+                except Exception as e:
+                    logging.error(f"Error in on_press: {e}")
+
+            # Create and start listener
+            try:
+                listener = pynput_keyboard.Listener(on_press=on_press, daemon=True)
+                listener.start()
+                self._keyboard_listener = listener
+                logging.info("Keyboard listener started successfully for macOS")
+            except Exception as e:
+                logging.error(f"Failed to start keyboard listener: {e}")
+                self._keyboard_listener = None
+
+        elif system == "Windows":
+            # Windows setup (unchanged)
+            try:
+                import keyboard
+                keyboard.unhook_all()
+
+                def on_key(event):
                     if self.is_pasting:
                         return
-
-                    # Skip if we're typing in the settings window
                     if self.settings_window is not None and tk.Toplevel.winfo_exists(self.settings_window.window):
                         active_widget = self.settings_window.window.focus_get()
                         if active_widget and isinstance(active_widget, (ttk.Entry, tk.Entry, ttk.Combobox)):
                             return
 
-                    # Add character to buffer
                     if event.event_type == keyboard.KEY_DOWN and hasattr(event, 'name'):
                         if event.name == 'space':
                             self.char_buffer += ' '
                         elif event.name == 'enter':
-                            self.char_buffer = ""  # Clear buffer on enter
+                            self.char_buffer = ""
                         elif event.name == 'backspace':
-                            if self.char_buffer:
-                                self.char_buffer = self.char_buffer[:-1]
-                        elif len(event.name) == 1:  # Only add printable characters
+                            self.char_buffer = self.char_buffer[:-1]
+                        elif len(event.name) == 1:
                             self.char_buffer += event.name
-
-                        # Keep buffer at manageable size
                         if len(self.char_buffer) > self.buffer_max_size:
                             self.char_buffer = self.char_buffer[-self.buffer_max_size:]
-
-                        # Check if trigger pattern is in buffer
                         if self.trigger_pattern in self.char_buffer:
-                            logging.info(f"Trigger pattern detected: {self.trigger_pattern}")
-
-                            # Delete the trigger text by simulating backspace presses
                             for _ in range(len(self.trigger_pattern)):
                                 keyboard.send('backspace')
-
-                            # Clear buffer and trigger paste
                             self.char_buffer = ""
                             self.trigger_paste()
 
+                keyboard.hook(on_key)
+                self._keyboard_listener = None  # not used for keyboard lib
+                logging.info(f"Keyboard hotkey hooked using 'keyboard' for Windows")
+
+            except Exception as e:
+                logging.error(f"Failed to set up hotkey for Windows: {e}")
+
+    def _setup_mac_listener(self):
+        """
+        Set up the keyboard listener for macOS in a safe way
+        """
+        try:
+            from pynput import keyboard as pynput_keyboard
+
+            # Make sure we're using the most current trigger phrase
+            trigger = self.trigger_pattern.lower()
+            logging.info(f"Setting up hotkey monitor for macOS, trigger: {trigger!r}")
+
+            def on_press(key):
+                # Skip processing during paste operations
+                if hasattr(self, 'is_pasting') and self.is_pasting:
+                    return
+
+                try:
+                    if hasattr(key, "char") and key.char is not None:
+                        c = key.char
+                        self.char_buffer += c
+                        if len(self.char_buffer) > self.buffer_max_size:
+                            self.char_buffer = self.char_buffer[-self.buffer_max_size:]
+                        logging.debug(f"Buffer now: {repr(self.char_buffer)}")
+
+                        # Always check against the current trigger pattern
+                        current_trigger = self.trigger_pattern.lower()
+                        if current_trigger in self.char_buffer:
+                            logging.debug(f"Trigger '{current_trigger}' detected")
+                            # Clear buffer immediately
+                            self.char_buffer = ""
+                            # Schedule with a delay to make it thread-safe
+                            if hasattr(self, 'root') and self.root:
+                                self.root.after(10, self.trigger_paste)
+                            else:
+                                # Fallback if root is not available
+                                threading.Timer(0.01, self.trigger_paste).start()
+                    elif key == pynput_keyboard.Key.space:
+                        self.char_buffer += " "
+                    elif key == pynput_keyboard.Key.enter:
+                        self.char_buffer = ""
+                    elif key == pynput_keyboard.Key.backspace:
+                        self.char_buffer = self.char_buffer[:-1]
                 except Exception as e:
-                    logging.error(f"Error in key handler: {e}", exc_info=True)
+                    logging.error(f"Error in on_press: {e}")
 
-            # Remove any existing keyboard hooks
-            keyboard.unhook_all()
+            # Create a new listener with daemon=True to ensure it doesn't block application exit
+            listener = pynput_keyboard.Listener(
+                on_press=on_press,
+                daemon=True
+            )
 
-            # Setup the new keyboard listener
-            keyboard.hook(on_key)
-
-            logging.info(f"Text pattern detection set up for: {self.trigger_pattern}")
+            # Start the listener
+            listener.start()
+            self._keyboard_listener = listener
+            logging.info("Keyboard listener started successfully for macOS")
 
         except Exception as e:
-            logging.error(f"Failed to setup text pattern detection: {e}", exc_info=True)
+            logging.error(f"Failed to set up macOS keyboard listener: {e}")
+            self._keyboard_listener = None
+
+    def _delayed_setup_mac_listener(self):
+        """
+        Set up the Mac keyboard listener after a delay
+        """
+        logging.info("Running delayed listener setup")
+        self._recently_stopped_listener = False
+        self._setup_mac_listener()
+
+    def _stop_all_keyboard_listeners(self):
+        """
+        Thoroughly clean up any existing keyboard listeners to prevent conflicts
+        """
+        # Stop our known listener if it exists
+        if hasattr(self, '_keyboard_listener') and self._keyboard_listener:
+            try:
+                logging.info("Stopping existing keyboard listener")
+                self._keyboard_listener.stop()
+                self._keyboard_listener = None
+            except Exception as e:
+                logging.error(f"Error stopping keyboard listener: {e}")
+                self._keyboard_listener = None
+
+        # For Windows, unhook all existing keyboard hooks
+        try:
+            if platform.system() == "Windows":
+                import keyboard
+                keyboard.unhook_all()
+                logging.info("Unhooked all keyboard hooks on Windows")
+        except Exception as e:
+            logging.error(f"Error clearing Windows keyboard hooks: {e}")
+
+        # Give a small delay to ensure cleanup completes
+        time.sleep(0.1)
 
     def trigger_paste(self):
-        """Separate method to handle paste operation"""
+        """Method to handle trigger and paste operation"""
+        # Make sure we have a paste lock
+        if not hasattr(self, 'paste_lock'):
+            self.paste_lock = threading.Lock()
+
+        # Use a lock to prevent multiple paste operations
+        if not self.paste_lock.acquire(blocking=False):
+            logging.debug("Another paste operation in progress, ignoring trigger")
+            return
+
         try:
+            # Set pasting flag to ignore keyboard events during paste
             self.is_pasting = True
-            self.paste_free_slots()
+            logging.debug("Starting paste operation with lock acquired")
+
+            if platform.system() == 'Darwin':
+                # First, delete the trigger text
+                for _ in range(len(self.trigger_pattern)):
+                    pyautogui.press('backspace')
+
+                # Small delay after backspace
+                time.sleep(0.05)
+
+                # Now perform the clipboard-based paste operation
+                if self.cached_free_slots:
+                    # Format the text
+                    formatted_text = self.format_free_slots(self.cached_free_slots)
+
+                    # Store original clipboard content
+                    try:
+                        original_clip = pyperclip.paste()
+                        self.original_clipboard = original_clip
+                    except Exception as e:
+                        logging.error(f"Error saving clipboard: {e}")
+                        self.original_clipboard = None
+
+                    # Copy our text to clipboard
+                    pyperclip.copy(formatted_text)
+                    logging.debug("Text copied to clipboard")
+
+                    # Small delay to ensure clipboard is updated
+                    time.sleep(0.1)
+
+                    # Paste using Command+V
+                    try:
+                        # Use proper key sequence with small delays
+                        pyautogui.keyDown('command')
+                        time.sleep(0.05)
+                        pyautogui.press('v')
+                        time.sleep(0.05)
+                        pyautogui.keyUp('command')
+                        logging.debug("Paste command sent")
+                    except Exception as e:
+                        logging.error(f"Error sending paste command: {e}")
+
+                    # Restore original clipboard after delay
+                    def restore_clip():
+                        if self.original_clipboard is not None:
+                            try:
+                                pyperclip.copy(self.original_clipboard)
+                                self.original_clipboard = None
+                                logging.debug("Original clipboard restored")
+                            except Exception as e:
+                                logging.error(f"Error restoring clipboard: {e}")
+
+                    # Use slightly longer delay for clipboard restoration
+                    threading.Timer(1.0, restore_clip).start()
+                else:
+                    logging.warning("No cached free slots available")
+            else:
+                # For Windows/Linux, use the original method
+                self.paste_free_slots()
+
+        except Exception as e:
+            logging.error(f"Error in trigger_paste: {e}", exc_info=True)
         finally:
-            self.is_pasting = False
+            # Reset paste flag after a delay
+            def reset_pasting():
+                self.is_pasting = False
+                try:
+                    self.paste_lock.release()
+                    logging.debug("Paste lock released")
+                except Exception as e:
+                    logging.error(f"Error releasing paste lock: {e}")
+
+            threading.Timer(0.5, reset_pasting).start()
 
     def debug_keyboard_state(self):
         """Debug helper to print current keyboard state"""
-        logging.info("=== Keyboard State Debug ===")
-        logging.info(f"Hotkey keys: {self.hotkey_keys}")
-        logging.info(f"Current keys: {self.current_keys}")
+        logging.debug("=== Keyboard State Debug ===")
+        logging.debug(f"Hotkey keys: {self.hotkey_keys}")
+        logging.debug(f"Current keys: {self.current_keys}")
         #logging.info(f"Time since last trigger: {time.time() - self.last_trigger_time}")
-        logging.info("==========================")
+        logging.debug("==========================")
 
     def restore_clipboard(self):
         """Restore original clipboard content"""
@@ -838,12 +1149,12 @@ class CalendarApp:
         }
 
         try:
-            logging.info(f"Attempting to load settings from: {self.settings_file}")
+            logging.debug(f"Attempting to load settings from: {self.settings_file}")
 
             if self.settings_file.exists():
                 with open(self.settings_file, 'r') as f:
                     file_content = f.read()
-                    logging.info(f"Settings file content: {file_content}")
+                    logging.debug(f"Settings file content: {file_content}")
 
                     # Check if file is empty
                     if not file_content.strip():
@@ -869,7 +1180,7 @@ class CalendarApp:
                         else:
                             value = settings.get(key, default_value)
                             setattr(self, key, value)
-                            logging.info(f"Loaded setting {key}: {value}")
+                            logging.debug(f"Loaded setting {key}: {value}")
 
                     # For backward compatibility - map hotkey to trigger_pattern if needed
                     if 'hotkey' in settings and not hasattr(self, 'trigger_pattern'):
@@ -908,7 +1219,7 @@ class CalendarApp:
                 'update_interval': self.update_interval,
                 'trigger_pattern': self.trigger_pattern,
                 'ignore_all_day_events': self.ignore_all_day_events,
-                'custom_text': self.custom_text  # Make sure to save custom_text too
+                'custom_text': self.custom_text
             }
 
             # Log what we're about to save
@@ -922,15 +1233,7 @@ class CalendarApp:
                 json_data = json.dumps(settings, indent=2)
                 f.write(json_data)
 
-            logging.info("Settings saved successfully")
-
-            # Verify the file was written correctly
-            if self.settings_file.exists():
-                file_size = self.settings_file.stat().st_size
-                logging.info(f"Settings file size: {file_size} bytes")
-            else:
-                logging.warning("Settings file was not created!")
-
+            logging.debug("Settings saved successfully")
         except Exception as e:
             logging.error(f"Error saving settings: {e}", exc_info=True)
 
@@ -969,206 +1272,236 @@ class CalendarApp:
             logging.error(f"Error saving cache: {e}")
 
     def show_settings(self):
-        """Show the settings window"""
+        """Show the settings window with improved window handling for compiled app"""
         try:
-            if self.settings_window is None or not tk.Toplevel.winfo_exists(self.settings_window.window):
-                self.settings_window = SettingsWindow(self, self.root)
-            else:
-                self.settings_window.window.lift()
-                self.settings_window.window.focus_force()
+            # Force any old window to be destroyed first
+            if hasattr(self, 'settings_window') and self.settings_window is not None:
+                try:
+                    if hasattr(self.settings_window, 'window') and self.settings_window.window is not None:
+                        if tk.Toplevel.winfo_exists(self.settings_window.window):
+                            self.settings_window.window.destroy()
+                except Exception as e:
+                    logging.debug(f"Error cleaning up old settings window: {e}")
+
+            # Create a fresh settings window
+            self.settings_window = SettingsWindow(self, self.root)
+
+            # Ensure it's visible and on top
+            self.settings_window.window.lift()
+            self.settings_window.window.attributes('-topmost', True)
+            self.settings_window.window.update()
+            self.settings_window.window.attributes('-topmost', False)
+            self.settings_window.window.focus_force()
+
+            # Log for debugging
+            logging.debug("Settings window created and shown")
+
+            # Validate that the Save button exists and is properly configured
+            save_buttons = [w for w in self.settings_window.window.winfo_children()
+                            if hasattr(w, 'winfo_class') and w.winfo_class() == 'TButton'
+                            and w.cget('text') == 'Save']
+            #logging.debug(f"Found {len(save_buttons)} Save buttons in the window")
+
         except Exception as e:
-            logging.error(f"Error showing settings window: {e}")
+            logging.error(f"Error showing settings window: {e}", exc_info=True)
 
     def is_weekend(self, date_obj):
         """Check if the given date is a weekend (Saturday=5 or Sunday=6)"""
         return date_obj.weekday() >= 5
 
+    # This is a helper function. The only purpose of this is to allow easy debugging of busy times.
+    def format_busy_log(busy_dict: Dict[date, List[Tuple[datetime, datetime, str]]], start_date: date, lookahead_days: int, local_tz) -> str:
+        """Formats the busy dictionary for readable debug output. (Static Method)"""
+        log_lines = ["--- Busy Event Log ---"]
+        end_date = start_date + timedelta(days=lookahead_days - 1) # Calculate end date based on lookahead
+
+        # Get all relevant dates within the lookahead window
+        relevant_dates = sorted([d for d in busy_dict.keys() if start_date <= d <= end_date])
+
+        # Create a set of dates we actually have data for within the range
+        dates_with_data = set(relevant_dates)
+
+        # Iterate through each day in the lookahead range
+        for i in range(lookahead_days):
+            current_day = start_date + timedelta(days=i)
+            day_str = current_day.strftime("%Y-%m-%d %A")
+            log_lines.append(f"=== {day_str} ===")
+
+            if current_day in dates_with_data:
+                # Sort events by start time for the current day
+                sorted_events = sorted(busy_dict[current_day], key=lambda x: x[0])
+                if sorted_events:
+                    for start_time, end_time, summary in sorted_events:
+                        # Format start and end times
+                        start_f = start_time.astimezone(local_tz).strftime("%H:%M")
+                        end_f = end_time.astimezone(local_tz).strftime("%H:%M")
+
+                        # If the event spans across midnight into the next day, show the date too
+                        if end_time.astimezone(local_tz).date() > start_time.astimezone(local_tz).date():
+                             end_f = end_time.astimezone(local_tz).strftime("%Y-%m-%d %H:%M")
+
+                        log_lines.append(f"  - Busy: {start_f} to {end_f} | Event: {summary}")
+                else:
+                    log_lines.append("  No busy events recorded for this day.")
+            else:
+                log_lines.append("  No busy events recorded for this day.")
+
+        log_lines.append("--- End Busy Event Log ---")
+        return "\n".join(log_lines)
+
     def fetch_and_parse_calendar(self, url: str) -> Dict[date, Set[datetime]]:
-        """Fetches an .ics calendar from a URL and parses it into free one-hour time slots."""
-        start_time = time.time()
+        """
+        Parse *url* and return {date: set(tz-aware datetime start-times)}
+        representing one-hour BUSY slots.  Handles RRULE/RDATE/EXDATE
+        across daylight-saving changes and eliminates UNTIL/DTSTART
+        timezone conflicts.
+        """
+        t0 = time.time()
         try:
-            response = requests.get(url)
-            response.raise_for_status()
+            gcal = Calendar.from_ical(requests.get(url, timeout=15).text)
 
-            # Add error checking for HTML response
-            if 'text/html' in response.headers.get('content-type', '').lower():
-                logging.error(f"URL returned HTML instead of iCal data: {url}")
-                return {}
+            today     = datetime.now(self.local_tz).date()
+            win_end   = today + timedelta(days=self.lookahead_days)
+            busy: Dict[date, List[Tuple[datetime, datetime, str]]] = {}
 
-            gcal = Calendar.from_ical(response.text)
+            def _as_list(prop):
+                if prop is None:
+                    return []
+                return prop if isinstance(prop, list) else [prop]
 
-            now = datetime.now(self.local_tz)
-            free_slots = {}
+            for comp in gcal.walk():
+                if comp.name != "VEVENT":
+                    continue
+                if comp.get("status", "").upper() == "CANCELLED":
+                    continue          # cancelled master
 
-            # Calculate date range
-            start_date = now.date()
-            end_date = start_date + timedelta(days=self.lookahead_days)
+                summary  = str(comp.get("summary", "")) or "No title"
 
-            # Create a dict to store busy times for each day
-            busy_times_by_day = {}
+                dt_start = comp.decoded("dtstart")
+                dt_end   = comp.decoded("dtend")
 
-            # Debug: Log calendar processing start
-            #logging.info(f"\n=== Processing calendar: {url} ===")
+                # all-day dates → midnight datetimes
+                if isinstance(dt_start, date) and not isinstance(dt_start, datetime):
+                    dt_start = datetime.combine(dt_start, datetime.min.time())
+                if isinstance(dt_end,   date) and not isinstance(dt_end,   datetime):
+                    dt_end   = datetime.combine(dt_end,   datetime.min.time())
 
-            for component in gcal.walk():
-                if component.name == "VEVENT":
-                    event_start = component.get('dtstart').dt
-                    event_end = component.get('dtend').dt
-                    event_summary = str(component.get('summary', 'No Title'))
-                    rrule_str = component.get('rrule')
+                # attach zone if absent
+                if dt_start.tzinfo is None:
+                    dt_start = self.local_tz.localize(dt_start)
+                if dt_end.tzinfo is None:
+                    dt_end   = self.local_tz.localize(dt_end)
 
-                    # Check if it's an all-day event
-                    is_all_day = (isinstance(event_start, date) and not isinstance(event_start, datetime))
+                dt_start = dt_start.astimezone(self.local_tz)
+                dt_end   = dt_end  .astimezone(self.local_tz)
+                duration = dt_end - dt_start
 
-                    # Skip this event if it's all-day and the ignore option is enabled
-                    if is_all_day and self.ignore_all_day_events:
-                        continue
-
-                    # Convert to datetime if date
-                    if isinstance(event_start, date) and not isinstance(event_start, datetime):
-                        event_start = datetime.combine(event_start, datetime.min.time())
-                    if isinstance(event_end, date) and not isinstance(event_end, datetime):
-                        event_end = datetime.combine(event_end, datetime.min.time())
-
-                    # Ensure timezone awareness
-                    if event_start.tzinfo is None:
-                        event_start = self.local_tz.localize(event_start)
-                    if event_end.tzinfo is None:
-                        event_end = self.local_tz.localize(event_end)
-
-                    # Convert to local timezone if needed
-                    event_start = event_start.astimezone(self.local_tz)
-                    event_end = event_end.astimezone(self.local_tz)
-
-                    # For multi-day events, create entries for each day in the range
-                    if (event_end.date() - event_start.date()).days > 0:
-                        # Check if it's a multi-day event to be ignored
-                        if self.ignore_all_day_events:
-                            continue
-
-                        # Process each day of the multi-day event
-                        current_day = event_start.date()
-                        end_day = event_end.date()
-
-                        while current_day <= end_day:
-                            day_start = datetime.combine(current_day, datetime.min.time())
-                            day_start = self.local_tz.localize(day_start)
-
-                            day_end = datetime.combine(current_day, datetime.max.time())
-                            day_end = self.local_tz.localize(day_end)
-
-                            # Adjust first and last day times
-                            if current_day == event_start.date():
-                                day_start = event_start
-                            if current_day == end_day:
-                                day_end = event_end
-
-                            if current_day not in busy_times_by_day:
-                                busy_times_by_day[current_day] = []
-                            busy_times_by_day[current_day].append((day_start, day_end, event_summary))
-
-                            current_day += timedelta(days=1)
-                    else:
-                        # Process regular single-day event as before
-                        event_date = event_start.date()
-                        if event_date not in busy_times_by_day:
-                            busy_times_by_day[event_date] = []
-                        busy_times_by_day[event_date].append((event_start, event_end, event_summary))
-
-                    if rrule_str:  # Recurring event
-                        # Convert rrule to dateutil rrule
-                        rule = rrule.rrulestr(
-                            rrule_str.to_ical().decode('utf-8'),
-                            dtstart=event_start
-                        )
-
-                        # Get all occurrences in our date range
-                        event_duration = event_end - event_start
-                        for occurrence_start in rule.between(
-                                now - event_duration,
-                                now + timedelta(days=self.lookahead_days)
-                        ):
-                            occurrence_end = occurrence_start + event_duration
-                            event_date = occurrence_start.date()
-
-                            if event_date not in busy_times_by_day:
-                                busy_times_by_day[event_date] = []
-                            busy_times_by_day[event_date].append((occurrence_start, occurrence_end, event_summary))
-                    else:  # Single event
-                        event_date = event_start.date()
-                        if event_date not in busy_times_by_day:
-                            busy_times_by_day[event_date] = []
-                        busy_times_by_day[event_date].append((event_start, event_end, event_summary))
-
-            # Process each day in the range
-            for day_offset in range(self.lookahead_days):
-                day_start = self.local_tz.localize(
-                    datetime.combine(start_date + timedelta(days=day_offset),
-                                     datetime.min.time().replace(hour=self.start_of_day)))
-
-                current_date = day_start.date()
-
-                # Skip weekends if exclude_weekends is True
-                if self.exclude_weekends and self.is_weekend(current_date):
+                is_all_day = isinstance(comp.get("dtstart").dt, date) and \
+                             not isinstance(comp.get("dtstart").dt, datetime)
+                multi_day  = (dt_end.date() - dt_start.date()).days > 0
+                if (is_all_day or multi_day) and self.ignore_all_day_events:
                     continue
 
-                day_end = self.local_tz.localize(
-                    datetime.combine(current_date,
-                                     datetime.min.time().replace(hour=self.end_of_day)))
+                # ───────────── overrides (RECURRENCE-ID) ─────────────
+                if comp.get("recurrence-id"):
+                    rid = comp.decoded("recurrence-id")
+                    if rid.tzinfo is None:
+                        rid = self.local_tz.localize(rid)
+                    rid = rid.astimezone(self.local_tz)
 
-                # Debug: Log day processing
-                #logging.info(f"\n=== Processing {current_date.strftime('%A %d %B %Y')} ===")
-
-                # Get busy times for this day and sort them
-                busy_times = busy_times_by_day.get(current_date, [])
-                busy_times.sort()
-
-                # Debug: Log all events for this day
-                #if busy_times:
-                #    logging.info(f"Events for {current_date.strftime('%A %d %B')}:")
-                #    for busy_start, busy_end, summary in busy_times:
-                #        logging.info(
-                #            f"  {summary}: {busy_start.strftime('%I:%M %p')} - {busy_end.strftime('%I:%M %p')}")
-
-                # Find free slots
-                current_time = day_start
-                day_free_slots = set()
-
-                #logging.info(f"Checking time slots for {current_date.strftime('%A %d %B')}:")
-
-                while current_time + timedelta(hours=1) <= day_end:
-                    slot_end = current_time + timedelta(hours=1)
-                    is_free = True
-
-                    for busy_start, busy_end, summary in busy_times:
-                        if (busy_start < slot_end and busy_end > current_time):
-                            #logging.info(
-                            #    f"  BUSY : {current_time.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')} "
-                            #    f"(Blocked by: {summary})")
-                            is_free = False
+                    # remove original instance
+                    for blk in busy.get(rid.date(), [])[:]:
+                        if abs((blk[0] - rid).total_seconds()) < 1:
+                            busy[rid.date()].remove(blk)
                             break
+                    busy.setdefault(dt_start.date(), []).append((dt_start, dt_end, summary))
+                    continue
 
-                    if is_free:
-                        day_free_slots.add(current_time)
-                        #logging.info(f"  FREE : {current_time.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')}")
+                rrule_prop = comp.get("rrule")
 
-                    current_time += timedelta(hours=1)
+                # ───────────── recurring events ─────────────
+                if rrule_prop:
+                    from dateutil import rrule as dtr
+                    import pytz, re
 
-                if day_free_slots:
-                    free_slots[current_date] = day_free_slots
-                    #logging.info(f"Final free slots for {current_date.strftime('%A %d %B')}:")
-                    #for slot in sorted(day_free_slots):
-                        #logging.info(
-                        #    f"  {slot.strftime('%I:%M %p')} - {(slot + timedelta(hours=1)).strftime('%I:%M %p')}")
+                    rrule_txt = rrule_prop.to_ical().decode("utf-8")
 
-            elapsed_time = time.time() - start_time
-            logging.info(f"Calendar loaded in {elapsed_time:.2f} seconds: {url}")
-            return free_slots
+                    # fix local UNTIL → UTC
+                    m = re.search(r"UNTIL=(\d{8}T\d{6})(Z?)", rrule_txt)
+                    if m and not m.group(2):
+                        until_local = datetime.strptime(m.group(1), "%Y%m%dT%H%M%S")
+                        until_local = self.local_tz.localize(until_local)
+                        until_utc   = until_local.astimezone(pytz.utc)
+                        rrule_txt   = (rrule_txt[:m.start(1)] +
+                                       until_utc.strftime("%Y%m%dT%H%M%SZ") +
+                                       rrule_txt[m.end(1):])
 
-        except Exception as e:
-            elapsed_time = time.time() - start_time
-            logging.error(f"Error fetching calendar ({elapsed_time:.2f} seconds): {url} - {e}")
-            logging.error(f"Exception details:", exc_info=True)
+                    rset = dtr.rruleset()
+                    # ignoretz=True ⇒ every value (DTSTART/UNTIL/BYxxx) treated naive
+                    rset.rrule(dtr.rrulestr(rrule_txt,
+                                            dtstart=dt_start.replace(tzinfo=None),
+                                            ignoretz=True))
+
+                    for rdate in _as_list(comp.get("rdate")):
+                        for rdt in rdate.dts:
+                            rset.rdate(rdt.dt.astimezone(self.local_tz).replace(tzinfo=None))
+                    for exdate in _as_list(comp.get("exdate")):
+                        for exdt in exdate.dts:
+                            rset.exdate(exdt.dt.astimezone(self.local_tz).replace(tzinfo=None))
+
+                    win_start_nv = datetime.combine(today, datetime.min.time())
+                    win_end_nv   = datetime.combine(win_end, datetime.max.time())
+
+                    for occ_nv in rset.between(win_start_nv, win_end_nv, inc=True):
+                        occ_start = self.local_tz.localize(occ_nv, is_dst=None)
+                        occ_end   = occ_start + duration
+                        busy.setdefault(occ_start.date(), []).append(
+                            (occ_start, occ_end, summary))
+                    continue
+
+                # ───────────── single / multi-day non-recurring ─────────────
+                if multi_day:
+                    ptr = dt_start.date()
+                    while ptr <= dt_end.date():
+                        blk_s = dt_start if ptr == dt_start.date() else \
+                                self.local_tz.localize(datetime.combine(ptr, datetime.min.time()))
+                        blk_e = dt_end   if ptr == dt_end.date()   else \
+                                self.local_tz.localize(datetime.combine(ptr, datetime.max.time()))
+                        busy.setdefault(ptr, []).append((blk_s, blk_e, summary))
+                        ptr += timedelta(days=1)
+                else:
+                    busy.setdefault(dt_start.date(), []).append((dt_start, dt_end, summary))
+
+            # Format and log the busy dictionary content for the relevant range
+            formatted_log = CalendarApp.format_busy_log(busy, today, self.lookahead_days, self.local_tz)
+            logging.debug(f"Processed busy blocks for URL {url}:\n{formatted_log}")
+
+            # ───────────── derive FREE one-hour slots ─────────────
+            free: Dict[date, Set[datetime]] = {}
+            for i in range(self.lookahead_days):
+                d = today + timedelta(days=i)
+                if self.exclude_weekends and self.is_weekend(d):
+                    continue
+                day_s = self.local_tz.localize(
+                    datetime.combine(d, datetime.min.time())).replace(hour=self.start_of_day)
+                day_e = self.local_tz.localize(
+                    datetime.combine(d, datetime.min.time())).replace(hour=self.end_of_day)
+
+                blocks = sorted(busy.get(d, []))
+                cur = day_s
+                while cur + timedelta(hours=1) <= day_e:
+                    slot_free = all(not (b_s < cur + timedelta(hours=1) and b_e > cur)
+                                    for b_s, b_e, _ in blocks)
+                    if slot_free:
+                        free.setdefault(d, set()).add(cur)
+                    cur += timedelta(hours=1)
+
+            logging.info("Calendar OK in %.2fs  %s", time.time() - t0, url)
+            return free
+
+        except Exception as exc:
+            logging.error("Calendar FAIL (%.2fs) %s – %s",
+                          time.time() - t0, url, exc, exc_info=True)
             return {}
 
     def find_common_free_slots(self):
@@ -1225,7 +1558,7 @@ class CalendarApp:
             day_str = date.strftime("%a") + f" {ordinal(date.day)}" + date.strftime(" %b")
             slot_strs = [slot.strftime("%I%p").lstrip("0").lower() for slot in slots]
             formatted_output.append(f"{day_str}: {', '.join(slot_strs)}")
-        return "\n".join(formatted_output)
+        return "\n".join(formatted_output)+ "\n\n"
 
     def toggle_weekends(self):
         """Toggle weekend exclusion and update free slots"""
@@ -1234,7 +1567,7 @@ class CalendarApp:
 
     def paste_free_slots(self):
         """Copy free slots to clipboard and simulate paste."""
-        logging.info("Paste free slots triggered")
+        logging.debug("Paste free slots triggered")
         try:
             if self.cached_free_slots:
                 formatted_text = self.format_free_slots(self.cached_free_slots)
@@ -1244,23 +1577,35 @@ class CalendarApp:
 
                 # Copy our text
                 pyperclip.copy(formatted_text)
-                logging.info("Text copied to clipboard")
+                logging.debug("Text copied to clipboard")
 
-                # Small delay before paste
-                time.sleep(0.1)
+                # Use a longer delay before paste for macOS
+                time.sleep(0.5 if platform.system() == 'Darwin' else 0.1)
 
-                # Simulate paste
+                # Simulate paste - use a wrapper for pyautogui to improve reliability on macOS
                 if platform.system() == 'Darwin':  # macOS
-                    pyautogui.hotkey('command', 'v')
+                    # Try paste multiple times with slight pauses to improve reliability
+                    for attempt in range(3):
+                        try:
+                            pyautogui.hotkey('command', 'v')
+                            logging.debug(f"Paste command sent (attempt {attempt + 1})")
+                            # If we got here without error, break the loop
+                            break
+                        except Exception as e:
+                            logging.error(f"Paste attempt {attempt + 1} failed: {e}")
+                            if attempt < 2:  # Don't sleep after last attempt
+                                time.sleep(0.2)
                 else:  # Windows/Linux
                     pyautogui.hotkey('ctrl', 'v')
-
-                logging.info("Paste command sent")
+                    logging.debug("Paste command sent")
 
                 # Restore original clipboard after a delay
-                threading.Timer(0.5, self.restore_clipboard).start()
+                delay = 0.5
+                if platform.system() == 'Darwin':
+                    delay = 2.0  # Use a longer delay for macOS
+                threading.Timer(delay, self.restore_clipboard).start()
 
-                logging.info("Paste operation completed")
+                logging.debug("Paste operation completed")
             else:
                 logging.warning("No cached free slots available")
         except Exception as e:
@@ -1278,7 +1623,7 @@ class CalendarApp:
                 logging.info("Starting calendar update...")
                 self.cached_free_slots = self.find_common_free_slots()
                 self.save_cache()
-                logging.info("Calendar update completed successfully")
+                logging.debug("Calendar update completed successfully")
             except Exception as e:
                 logging.error(f"Error updating free slots: {e}")
             finally:
@@ -1298,7 +1643,7 @@ class CalendarApp:
             # Try to load embedded icon
             icon_path = get_resource_path('icon.png')
             icon_image = Image.open(icon_path)
-            logging.info("Custom icon loaded successfully")
+            logging.debug("Custom icon loaded successfully")
             return icon_image
         except Exception as e:
             logging.warning(f"Could not load icon: {e}, using default")
@@ -1318,30 +1663,118 @@ class CalendarApp:
         """Return the loaded icon"""
         return self.icon_image
 
-
     def cleanup(self):
-        """Cleanup before exit"""
         logging.info("FreeTime application shutting down...")
         try:
-            keyboard.unhook_all()
-            logging.info("Keyboard hooks removed")
+            # Set shutting down flag
+            self.is_shutting_down = True
 
-            if self.original_clipboard is not None:
-                pyperclip.copy(self.original_clipboard)
+            # Clean up keyboard hooks on Windows
+            if platform.system() == "Windows":
+                try:
+                    import keyboard
+                    keyboard.unhook_all()
+
+                    # Additional Windows-specific cleanup
+                    try:
+                        # Force garbage collection
+                        import gc
+                        gc.collect()
+
+                        # Release COM objects if any were created
+                        import win32api
+                        import win32con
+                        # Post WM_QUIT to any hidden windows that might be lingering
+                        win32api.PostQuitMessage(0)
+                    except ImportError:
+                        logging.debug("Windows-specific modules not available")
+                except Exception as e:
+                    logging.error(f"Error cleaning up Windows keyboard hooks: {e}")
+
+            # Stop pynput listener on macOS
+            elif platform.system() == "Darwin" and hasattr(self, '_keyboard_listener'):
+                try:
+                    self._keyboard_listener.stop()
+                    self._keyboard_listener = None
+                except Exception as e:
+                    logging.error(f"Error stopping keyboard listener: {e}")
+
+            # Restore clipboard if needed
+            if hasattr(self, 'original_clipboard') and self.original_clipboard is not None:
+                try:
+                    pyperclip.copy(self.original_clipboard)
+                    self.original_clipboard = None
+                except Exception as e:
+                    logging.error(f"Error restoring clipboard: {e}")
+
+            # Stop icon if it exists
+            if hasattr(self, 'icon') and self.icon:
+                try:
+                    logging.info("Stopping system tray icon...")
+                    self.icon.stop()
+                    self.icon = None
+                except Exception as e:
+                    logging.error(f"Error stopping icon: {e}")
+
+            # Close any open windows
+            try:
+                for widget in self.root.winfo_children():
+                    if isinstance(widget, tk.Toplevel) and widget.winfo_exists():
+                        widget.destroy()
+            except Exception as e:
+                logging.error(f"Error closing windows: {e}")
+
         except Exception as e:
             logging.error(f"Error during cleanup: {e}")
 
-        if self.icon:
-            self.icon.stop()
-        self.root.quit()
+        finally:
+            # Always attempt to quit the root window
+            try:
+                logging.info("Quitting tkinter application...")
+                self.root.quit()
+                self.root.destroy()  # Explicitly destroy the root window
+            except Exception as e:
+                logging.error(f"Error quitting root window: {e}")
+
+            logging.info("Application cleanup complete")
+
+            # For Windows compiled app, ensure exit
+            if platform.system() == "Windows" and getattr(sys, 'frozen', False):
+                try:
+                    # Force process termination as last resort
+                    logging.info("Forcing process termination...")
+                    import os
+                    os._exit(0)  # Force immediate exit without cleanup
+                except Exception:
+                    pass
+
+    def _ensure_cleanup(self):
+        """Ensure cleanup happens no matter how the app exits"""
+        if not hasattr(self, 'is_shutting_down') or not self.is_shutting_down:
+            logging.info("Emergency cleanup triggered")
+            self.cleanup()
+
+        # Force exit any monitoring
+        if platform.system() == "Darwin":
+            try:
+                from pynput import keyboard
+                for t in threading.enumerate():
+                    if isinstance(t, keyboard.Listener):
+                        try:
+                            t.stop()
+                            logging.info(f"Stopped lingering keyboard thread: {t.name}")
+                        except:
+                            pass
+            except:
+                pass
 
     def show_about(self):
         """Show the About window"""
         try:
             if self.about_window is None or not tk.Toplevel.winfo_exists(self.about_window.window):
-                self.root.deiconify()  # Ensure root window exists
+                #self.root.deiconify()  # Ensure root window exists
                 self.about_window = AboutWindow(self.root, self.icon_image)
-                self.root.withdraw()  # Hide root window again
+                #self.root.withdraw()  # Hide root window again
             else:
                 self.about_window.window.lift()
                 self.about_window.window.focus_force()
@@ -1349,44 +1782,77 @@ class CalendarApp:
             logging.error(f"Error showing About window: {e}")
 
     def run(self):
-        """Run the application."""
+        """Run the application, with improved cleanup handling"""
         try:
+            # Set initialize state
+            self.is_shutting_down = False
+
             # Create and start update thread
             update_thread = threading.Thread(target=self.update_loop, daemon=True)
             update_thread.start()
 
-            # Setup hotkey
+            # Setup the hotkey monitoring
             self.setup_hotkey()
 
-            # Create system tray icon
-            self.icon = pystray.Icon(
-                "Calendar",
-                self.create_icon(),
-                "FreeTime",
-                menu=pystray.Menu(
-                    pystray.MenuItem("About", lambda: self.root.after(0, self.show_about)),  # Add this line
-                    pystray.MenuItem("Settings", lambda: self.root.after(0, self.show_settings)),
-                    pystray.MenuItem("Update Now", lambda: self.update_free_slots()),
-                    pystray.MenuItem("Exit", lambda: self.cleanup())
+            # -------- pystray + tkinter MAIN LOOP HANDLING ---------
+            system = platform.system()
+            if system == "Darwin":
+                # Register exit handler for macOS
+                import atexit
+                atexit.register(self._ensure_cleanup)
+
+                # On macOS, pystray must run on the main thread, and tkinter also; avoid background threads for UI.
+                self.icon = pystray.Icon(
+                    "Calendar",
+                    self.create_icon(),
+                    "FreeTime",
+                    menu=pystray.Menu(
+                        pystray.MenuItem("About", lambda: self.show_about()),
+                        pystray.MenuItem("Settings", lambda: self.show_settings()),
+                        pystray.MenuItem("Update Now", lambda: self.update_free_slots()),
+                        pystray.MenuItem("Exit", lambda: self.cleanup())
+                    )
                 )
-            )
+                # Start pystray in the main thread
+                self.icon.run_detached()  # non-blocking
 
-            logging.info("System tray icon initialized")
+                # Check if calendar URLs exist, if not show settings after a short delay
+                if not self.calendar_urls:
+                    self.root.after(1000, self.show_settings)
 
-            # Check if calendar URLs exist, if not show settings
-            if not self.calendar_urls:
-                self.root.after(1000, self.show_settings)
+                # Now run tkinter mainloop (main thread)
+                self.root.mainloop()
 
-            # Run the icon in a separate thread
-            icon_thread = threading.Thread(target=self.icon.run, daemon=True)
-            icon_thread.start()
+            else:
+                # On Windows/Linux: Can run pystray in a separate thread
+                self.icon = pystray.Icon(
+                    "Calendar",
+                    self.create_icon(),
+                    "FreeTime",
+                    menu=pystray.Menu(
+                        pystray.MenuItem("About", lambda: self.root.after(0, self.show_about)),  # Safe for thread
+                        pystray.MenuItem("Settings", lambda: self.root.after(0, self.show_settings)),
+                        pystray.MenuItem("Update Now", lambda: self.update_free_slots()),
+                        pystray.MenuItem("Exit", lambda: self.cleanup())
+                    )
+                )
+                logging.debug("System tray icon initialized")
 
-            # Start the tkinter main loop
-            self.root.mainloop()
+                if not self.calendar_urls:
+                    self.root.after(1000, self.show_settings)
+
+                # Start pystray in separate thread
+                icon_thread = threading.Thread(target=self.icon.run, daemon=True)
+                icon_thread.start()
+
+                # Start tkinter mainloop
+                self.root.mainloop()
 
         except Exception as e:
             logging.error(f"Fatal error in main loop: {e}")
+            self._ensure_cleanup()  # Make sure cleanup happens even if we crash
             raise
+
 
 if __name__ == "__main__":
     try:
@@ -1396,7 +1862,41 @@ if __name__ == "__main__":
         logging.info(f"Operating System: {platform.system()} {platform.version()}")
 
         app = CalendarApp()
+
+        # Set up better process exit handling for Windows
+        if platform.system() == "Windows":
+            import atexit
+
+
+            def ensure_exit():
+                try:
+                    if hasattr(app, 'cleanup'):
+                        app.cleanup()
+                    # Force exit for compiled Windows app
+                    if getattr(sys, 'frozen', False):
+                        import os
+                        os._exit(0)
+                except Exception:
+                    pass
+
+
+            atexit.register(ensure_exit)
+
         app.run()
+    except KeyboardInterrupt:
+        logging.info("Application terminated by user (KeyboardInterrupt)")
     except Exception as e:
-        logging.error(f"Application error: {e}")
-        raise
+        logging.error(f"Application error: {e}", exc_info=True)
+    finally:
+        # Final cleanup
+        if 'app' in locals() and hasattr(app, 'cleanup'):
+            app.cleanup()
+
+        # Final forced exit for Windows compiled app
+        if platform.system() == "Windows" and getattr(sys, 'frozen', False):
+            try:
+                import os
+
+                os._exit(0)
+            except Exception:
+                pass
