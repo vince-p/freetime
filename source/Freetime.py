@@ -466,9 +466,9 @@ class SettingsWindow:
         ttk.Spinbox(app_frame, from_=1, to=60, width=5, textvariable=self.interval_var).grid(
             row=0, column=1, sticky=tk.W, pady=5)
 
-        # Trigger Text (replacing Hotkey)
+        # Trigger Text
         ttk.Label(app_frame, text="Trigger Text:").grid(row=1, column=0, sticky=tk.W)
-        self.trigger_text_var = tk.StringVar(value=getattr(self.app, 'trigger_pattern', ":ttt"))
+        self.trigger_text_var = tk.StringVar(value=getattr(self.app, 'trigger_pattern', ":tt"))
         self.trigger_text_entry = ttk.Entry(app_frame, textvariable=self.trigger_text_var)
         self.trigger_text_entry.grid(row=1, column=1, sticky=(tk.W, tk.E))
 
@@ -548,7 +548,7 @@ class SettingsWindow:
                 return
 
             # Store old trigger pattern
-            old_trigger = getattr(self.app, 'trigger_pattern', ":ttt")
+            old_trigger = getattr(self.app, 'trigger_pattern', ":tt")
             new_trigger = self.trigger_text_var.get()
             trigger_changed = new_trigger != old_trigger
 
