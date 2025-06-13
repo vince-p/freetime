@@ -111,10 +111,12 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     target_arch=None,
-    codesign_identity=None,
+    #codesign_identity=None,
     entitlements_file=None,
     icon=icon_png,
-    distpath=DIST_PATH
+    distpath=DIST_PATH,
+    codesign_identity='-',  # Ad-hoc signing
+    #entitlements_file=None
 )
 
 app = BUNDLE(
@@ -136,39 +138,66 @@ app = BUNDLE(
     },
 )
 
+# Updated post-build function to include DMG creation
 def _post_build():
-    """Post-build steps to ensure proper icon handling"""
+    """Post-build steps to sign the app and create a DMG."""
+    app_path = os.path.join(DIST_PATH, 'Freetime.app')
+    app_name = os.path.basename(app_path)
+    dmg_name = 'Freetime.dmg'
+    dmg_path = os.path.join(DIST_PATH, dmg_name)
+
+    # --- Part 1: Icon and App Signing (from your original script) ---
     try:
-        app_path = os.path.join(DIST_PATH, 'Freetime.app')
+        # Create proper ICNS file
         resources_path = os.path.join(app_path, 'Contents', 'Resources')
         os.makedirs(resources_path, exist_ok=True)
-
-        # 1. Create proper ICNS file
         icns_path = os.path.join(resources_path, 'icon.icns')
         if create_proper_icns(icon_png, icns_path):
             print("Successfully created ICNS file")
-        else:
-            # Fallback: just copy the PNG
-            print("Using fallback PNG icon")
-            os.replace(icon_png, os.path.join(resources_path, 'icon.png'))
 
-        # 2. Force Finder to recognize the icon
-        try:
-            # Touch the app bundle
-            subprocess.run(['touch', app_path], check=True)
+        # Ad-hoc sign the app and remove quarantine
+        print(f"Signing and preparing '{app_name}' for Gatekeeper...")
+        subprocess.run(['xattr', '-cr', app_path], check=True)
+        subprocess.run(['codesign', '--force', '--deep', '--sign', '-', app_path], check=True)
+        print("App is now ad-hoc signed.")
 
-            # Remove any existing extended attributes
-            subprocess.run(['xattr', '-cr', app_path], check=True)
+        # Force Finder to update the icon
+        subprocess.run(['touch', app_path], check=True)
+        subprocess.run(['killall', 'Finder'], check=True)
 
-            # Force Finder to update
-            subprocess.run(['killall', 'Finder'], check=True)
-            time.sleep(1)  # Give Finder time to restart
-
-            print("Finder icon should now be visible")
-        except Exception as e:
-            print(f"Finder update warning: {e}")
     except Exception as e:
-        print(f"Post-build error: {e}")
+        print(f"Error during app signing or icon creation: {e}")
+        return # Stop if signing fails
+
+    # --- Part 2: DMG Creation (newly added) ---
+    try:
+        print(f"\nCreating DMG: {dmg_name}...")
+
+        # Check if DMG already exists and remove it
+        if os.path.exists(dmg_path):
+            os.remove(dmg_path)
+
+        # Create the command to build the DMG
+        # This uses a modern format (ULFO) which is compressed and read-only
+        command = [
+            'hdiutil', 'create',
+            '-volname', 'Freetime',         # The name of the volume when mounted
+            '-srcfolder', app_path,         # The source to package
+            '-ov',                          # Overwrite existing file
+            '-format', 'ULFO',              # Compressed, read-only format
+            dmg_path                        # The output path for the .dmg file
+        ]
+
+        # Run the command
+        subprocess.run(command, check=True)
+
+        print("----------------------------------------------------")
+        print(f"Successfully created DMG: {dmg_path}")
+        print("----------------------------------------------------")
+
+    except Exception as e:
+        print(f"Error during DMG creation: {e}")
+
 
 if platform.system() == 'Darwin': # Only register for macOS
     import atexit

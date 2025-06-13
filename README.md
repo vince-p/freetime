@@ -32,7 +32,8 @@ See below:
 
 ## Quick Start
 
-1. Download and run FreeTime
+1. Download and run FreeTime.
+1b. If you are on Mac you need to open the .dmg file and then drag the app to Applications before you can run it.
 2. Add your calendar URLs (see below for how to get these)
 3. Set your preferred working hours and options
 6. Use the trigger phrase anywhere (default ":tt") to paste your available times
@@ -93,9 +94,3 @@ See below:
 This is my first app and I'd love any feedback if this is useful or if you find any bugs.
 Contact me at freetime@cogscience.org
 
-## Building from Source
-
-1. Clone the repository
-```bash
-git clone https://github.com/vince-p/freetime.git
-cd freetime
