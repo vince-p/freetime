@@ -32,8 +32,7 @@ See below:
 
 ## Quick Start
 
-1. Download and run FreeTime.
-1b. If you are on Mac you need to open the .dmg file and then drag the app to Applications before you can run it.
+1. Download and run FreeTime. *Note:* If you are on Mac you need to open the .dmg file and then drag the app to Applications before you can run it.
 2. Add your calendar URLs (see below for how to get these)
 3. Set your preferred working hours and options
 6. Use the trigger phrase anywhere (default ":tt") to paste your available times
